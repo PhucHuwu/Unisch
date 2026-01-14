@@ -174,7 +174,7 @@
                 const dtStart = formatICSDate(ngayHocStr, timeStart);
                 const dtEnd = formatICSDate(ngayHocStr, timeEnd);
 
-                const summary = `${monHoc} (Tiết ${tietBatDau}-${tietBatDau + soTiet - 1})`;
+                const summary = `${monHoc} - ${buoi.ma_nhom || ""}`;
                 const description = `Giảng viên: ${giangVien}\\nLớp: ${lop}\\nTiết: ${tietBatDau} - ${tietBatDau + soTiet - 1}`;
                 const location = phong;
 
