@@ -1,8 +1,20 @@
 // Content script lắng nghe message từ popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "GET_SEMESTERS") {
+        fetchSemesters()
+            .then((data) => {
+                sendResponse({ success: true, data: data });
+            })
+            .catch((err) => {
+                sendResponse({ success: false, message: err.message });
+            });
+        return true; // Giữ kênh mở cho phản hồi bất đồng bộ
+    }
+
     if (request.action === "START_EXPORT") {
         const shouldMerge = request.merge !== undefined ? request.merge : true;
-        exportSchedule(shouldMerge)
+        const selectedSemester = request.hoc_ky || 20252;
+        exportSchedule(shouldMerge, selectedSemester)
             .then((msg) => {
                 sendResponse({ success: true, message: msg });
             })
@@ -13,7 +25,53 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 });
 
-async function exportSchedule(shouldMerge = true) {
+// Lấy danh sách học kỳ
+async function fetchSemesters() {
+    const token = getToken();
+    const response = await fetch("https://qldt.ptit.edu.vn/dkmh/api/sch/w-locdshockytkbuser", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+            filter: { is_tieng_anh: null },
+            additional: {
+                paging: { limit: 100, page: 1 },
+                ordering: [{ name: "hoc_ky", order_type: 1 }],
+            },
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Lỗi API: ${response.status} ${response.statusText}`);
+    }
+
+    const json = await response.json();
+
+    if (!json.data || !json.data.ds_hoc_ky) {
+        throw new Error("Không thể lấy danh sách học kỳ");
+    }
+
+    return json.data;
+}
+
+// Lấy token từ sessionStorage
+function getToken() {
+    const userStr = sessionStorage.getItem("CURRENT_USER");
+    if (!userStr) {
+        throw new Error("Không tìm thấy thông tin đăng nhập! Vui lòng đăng nhập qldt.ptit.edu.vn trước.");
+    }
+    try {
+        const user = JSON.parse(userStr);
+        return user.access_token || user;
+    } catch (e) {
+        console.warn("Không parse được JSON user, thử dùng trực tiếp chuỗi...");
+        return userStr;
+    }
+}
+
+async function exportSchedule(shouldMerge = true, selectedSemester = 20252) {
     // --- CẤU HÌNH ---
     const CONFIG = {
         API_URL: "https://qldt.ptit.edu.vn/dkmh/api/sch/w-locdstkbtuanusertheohocky",
@@ -37,27 +95,15 @@ async function exportSchedule(shouldMerge = true) {
         },
     };
 
-    // --- HELPER FUNCTIONS ---
-
-    function getToken() {
-        const userStr = sessionStorage.getItem("CURRENT_USER");
-        if (!userStr) {
-            throw new Error("Không tìm thấy thông tin đăng nhập! Vui lòng đăng nhập qldt.ptit.edu.vn trước.");
-        }
-        try {
-            const user = JSON.parse(userStr);
-            return user.access_token || user;
-        } catch (e) {
-            console.warn("Không parse được JSON user, thử dùng trực tiếp chuỗi...");
-            return userStr;
-        }
-    }
+    // --- HÀM TIỆN ÍCH ---
 
     function formatICSDate(dateStr, timeObj = { h: 0, m: 0 }) {
+        // dateStr: "2026-01-12T00:00:00" -> Đối tượng Date
         const d = new Date(dateStr);
         d.setHours(timeObj.h);
         d.setMinutes(timeObj.m);
 
+        // Định dạng: YYYYMMDDTHHmmSS
         const year = d.getFullYear();
         const month = String(d.getMonth() + 1).padStart(2, "0");
         const day = String(d.getDate()).padStart(2, "0");
@@ -102,12 +148,13 @@ async function exportSchedule(shouldMerge = true) {
             const next = classes[i];
             const currentEnd = current.tiet_bat_dau + current.so_tiet;
 
-            // Kiểm tra cùng ngày, cùng môn, và tiết liên tiếp
+            // Kiểm tra cùng ngày, cùng môn, cùng phòng, và tiết liên tiếp
             const isSameDay = current.ngay_hoc === next.ngay_hoc;
             const isSameSubject = current.ten_mon === next.ten_mon;
+            const isSameRoom = current.ma_phong === next.ma_phong;
             const isConsecutive = next.tiet_bat_dau === currentEnd;
 
-            if (isSameDay && isSameSubject && isConsecutive) {
+            if (isSameDay && isSameSubject && isSameRoom && isConsecutive) {
                 // Gộp: mở rộng số tiết
                 current.so_tiet += next.so_tiet;
                 console.log(`[MERGE] ${current.ten_mon}: Tiết ${current.tiet_bat_dau}-${current.tiet_bat_dau + current.so_tiet - 1}`);
@@ -121,12 +168,12 @@ async function exportSchedule(shouldMerge = true) {
         return merged;
     }
 
-    // --- MAIN LOGIC ---
+    // --- LOGIC CHÍNH ---
 
-    console.log("Đang khởi động quy trình xuất lịch...");
-    const token = getToken();
+    console.log(`Đang khởi động quy trình xuất lịch (Học kỳ: ${selectedSemester})...`);
 
     console.log("Đang tải dữ liệu lịch học...");
+    const token = getToken();
     const response = await fetch(CONFIG.API_URL, {
         method: "POST",
         headers: {
@@ -135,7 +182,7 @@ async function exportSchedule(shouldMerge = true) {
         },
         body: JSON.stringify({
             filter: {
-                hoc_ky: 20252,
+                hoc_ky: selectedSemester,
                 ten_hoc_ky: "",
             },
             additional: {
@@ -213,7 +260,7 @@ async function exportSchedule(shouldMerge = true) {
         const dtStart = formatICSDate(ngayHocStr, timeStart);
         const dtEnd = formatICSDate(ngayHocStr, timeEnd);
 
-        const summary = `${monHoc} (Tiết ${tietBatDau}-${tietBatDau + soTiet - 1})`;
+        const summary = `${monHoc} - ${buoi.ma_nhom || ""}`;
         const description = `Giảng viên: ${giangVien}\\nLớp: ${lop}\\nTiết: ${tietBatDau} - ${tietBatDau + soTiet - 1}`;
         const location = phong;
 
@@ -236,13 +283,13 @@ async function exportSchedule(shouldMerge = true) {
         throw new Error("Không tìm thấy lịch học nào để xuất!");
     }
 
-    // Download file logic
+    // Tải file
     const blob = new Blob([icsContent.join("\r\n")], { type: "text/calendar;charset=utf-8" });
     const url = URL.createObjectURL(blob);
 
     const a = document.createElement("a");
     a.href = url;
-    a.download = `TKB_PTIT_${new Date().toISOString().slice(0, 10)}.ics`;
+    a.download = `TKB_PTIT_${selectedSemester}_${new Date().toISOString().slice(0, 10)}.ics`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

@@ -10,11 +10,19 @@
   <div class="container">
     <h3>PTIT Schedule Exporter</h3>
     <p class="desc">Chuyển sang tab QLDT và nhấn nút bên dưới.</p>
+    
+    <div class="form-group">
+      <label for="semesterSelect">Học kỳ:</label>
+      <select id="semesterSelect" disabled>
+        <option value="">Đang tải...</option>
+      </select>
+    </div>
+    
     <label class="checkbox-container">
       <input type="checkbox" id="mergeCheckbox" checked>
       <span>Gộp các tiết liên tiếp</span>
     </label>
-    <button id="exportBtn">Xuất Lịch (.ics)</button>
+    <button id="exportBtn" disabled>Xuất Lịch (.ics)</button>
     <div id="status"></div>
   </div>
   <script src="popup.js"></script>

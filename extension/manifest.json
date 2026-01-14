@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "PTIT Schedule Exporter",
-    "version": "1.2",
+    "version": "1.5",
     "description": "Export PTIT schedule to ICS format for Google Calendar.",
     "permissions": ["activeTab", "scripting"],
     "host_permissions": ["*://qldt.ptit.edu.vn/*"],
