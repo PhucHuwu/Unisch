@@ -1,18 +1,19 @@
-// Content script listens for messages from popup
+// Content script lắng nghe message từ popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "START_EXPORT") {
-        exportSchedule()
+        const shouldMerge = request.merge !== undefined ? request.merge : true;
+        exportSchedule(shouldMerge)
             .then((msg) => {
                 sendResponse({ success: true, message: msg });
             })
             .catch((err) => {
                 sendResponse({ success: false, message: err.message });
             });
-        return true; // Keep channel open for async response
+        return true; // Giữ kênh mở cho phản hồi bất đồng bộ
     }
 });
 
-async function exportSchedule() {
+async function exportSchedule(shouldMerge = true) {
     // --- CẤU HÌNH ---
     const CONFIG = {
         API_URL: "https://qldt.ptit.edu.vn/dkmh/api/sch/w-locdstkbtuanusertheohocky",
@@ -39,7 +40,6 @@ async function exportSchedule() {
     // --- HELPER FUNCTIONS ---
 
     function getToken() {
-        // Content script runs in the context of the page, so it can access sessionStorage
         const userStr = sessionStorage.getItem("CURRENT_USER");
         if (!userStr) {
             throw new Error("Không tìm thấy thông tin đăng nhập! Vui lòng đăng nhập qldt.ptit.edu.vn trước.");
@@ -79,6 +79,46 @@ async function exportSchedule() {
         const endM = endTotalMinutes % 60;
 
         return { h: endH, m: endM };
+    }
+
+    /**
+     * Gộp các buổi học liên tiếp có cùng môn trong cùng ngày.
+     * Ví dụ: "Môn A (Tiết 7-8)" + "Môn A (Tiết 9-9)" -> "Môn A (Tiết 7-9)"
+     */
+    function mergeConsecutiveClasses(classes) {
+        if (classes.length === 0) return [];
+
+        // Sắp xếp theo: ngày học -> tên môn -> tiết bắt đầu
+        classes.sort((a, b) => {
+            if (a.ngay_hoc !== b.ngay_hoc) return a.ngay_hoc.localeCompare(b.ngay_hoc);
+            if (a.ten_mon !== b.ten_mon) return a.ten_mon.localeCompare(b.ten_mon);
+            return a.tiet_bat_dau - b.tiet_bat_dau;
+        });
+
+        const merged = [];
+        let current = { ...classes[0] };
+
+        for (let i = 1; i < classes.length; i++) {
+            const next = classes[i];
+            const currentEnd = current.tiet_bat_dau + current.so_tiet;
+
+            // Kiểm tra cùng ngày, cùng môn, và tiết liên tiếp
+            const isSameDay = current.ngay_hoc === next.ngay_hoc;
+            const isSameSubject = current.ten_mon === next.ten_mon;
+            const isConsecutive = next.tiet_bat_dau === currentEnd;
+
+            if (isSameDay && isSameSubject && isConsecutive) {
+                // Gộp: mở rộng số tiết
+                current.so_tiet += next.so_tiet;
+                console.log(`[MERGE] ${current.ten_mon}: Tiết ${current.tiet_bat_dau}-${current.tiet_bat_dau + current.so_tiet - 1}`);
+            } else {
+                merged.push(current);
+                current = { ...next };
+            }
+        }
+        merged.push(current);
+
+        return merged;
     }
 
     // --- MAIN LOGIC ---
@@ -130,49 +170,64 @@ async function exportSchedule() {
 
     console.log(`Tìm thấy ${json.data.ds_tuan_tkb.length} tuần học.`);
 
+    // Thu thập tất cả các buổi học
+    let allClasses = [];
+    json.data.ds_tuan_tkb.forEach((tuan) => {
+        tuan.ds_thoi_khoa_bieu.forEach((buoi) => {
+            if (!buoi.is_nghi_day) {
+                allClasses.push({ ...buoi });
+            }
+        });
+    });
+
+    console.log(`Tổng số buổi học trước khi xử lý: ${allClasses.length}`);
+
+    // Gộp các buổi học liên tiếp nếu được yêu cầu
+    let processedClasses = shouldMerge ? mergeConsecutiveClasses(allClasses) : allClasses;
+
+    if (shouldMerge) {
+        console.log(`Tổng số event sau khi merge: ${processedClasses.length}`);
+    }
+
     let icsContent = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//PTIT Schedule Exporter//Unisch//VI", "CALSCALE:GREGORIAN", "METHOD:PUBLISH"];
 
     let eventCount = 0;
 
-    json.data.ds_tuan_tkb.forEach((tuan) => {
-        tuan.ds_thoi_khoa_bieu.forEach((buoi) => {
-            if (buoi.is_nghi_day) return;
+    processedClasses.forEach((buoi) => {
+        const monHoc = buoi.ten_mon;
+        const giangVien = buoi.ten_giang_vien;
+        const phong = buoi.ma_phong;
+        const lop = buoi.ma_lop;
+        const ngayHocStr = buoi.ngay_hoc;
+        const tietBatDau = buoi.tiet_bat_dau;
+        const soTiet = buoi.so_tiet;
 
-            const monHoc = buoi.ten_mon;
-            const giangVien = buoi.ten_giang_vien;
-            const phong = buoi.ma_phong;
-            const lop = buoi.ma_lop;
-            const ngayHocStr = buoi.ngay_hoc;
-            const tietBatDau = buoi.tiet_bat_dau;
-            const soTiet = buoi.so_tiet;
+        const timeStart = CONFIG.START_TIMES[tietBatDau];
+        if (!timeStart) {
+            console.warn(`Không rõ giờ bắt đầu cho tiết ${tietBatDau} của môn ${monHoc}. Bỏ qua.`);
+            return;
+        }
 
-            const timeStart = CONFIG.START_TIMES[tietBatDau];
-            if (!timeStart) {
-                console.warn(`Không rõ giờ bắt đầu cho tiết ${tietBatDau} của môn ${monHoc}. Bỏ qua.`);
-                return;
-            }
+        const timeEnd = getEndTime(timeStart, soTiet);
 
-            const timeEnd = getEndTime(timeStart, soTiet);
+        const dtStart = formatICSDate(ngayHocStr, timeStart);
+        const dtEnd = formatICSDate(ngayHocStr, timeEnd);
 
-            const dtStart = formatICSDate(ngayHocStr, timeStart);
-            const dtEnd = formatICSDate(ngayHocStr, timeEnd);
+        const summary = `${monHoc} (Tiết ${tietBatDau}-${tietBatDau + soTiet - 1})`;
+        const description = `Giảng viên: ${giangVien}\\nLớp: ${lop}\\nTiết: ${tietBatDau} - ${tietBatDau + soTiet - 1}`;
+        const location = phong;
 
-            const summary = `${monHoc} (Tiết ${tietBatDau}-${tietBatDau + soTiet - 1})`;
-            const description = `Giảng viên: ${giangVien}\\nLớp: ${lop}\\nTiết: ${tietBatDau} - ${tietBatDau + soTiet - 1}`;
-            const location = phong;
+        icsContent.push("BEGIN:VEVENT");
+        icsContent.push(`UID:${buoi.id_tkb}-${buoi.ngay_hoc}@ptit.edu.vn`);
+        icsContent.push(`DTSTAMP:${formatICSDate(new Date().toISOString())}`);
+        icsContent.push(`DTSTART:${dtStart}`);
+        icsContent.push(`DTEND:${dtEnd}`);
+        icsContent.push(`SUMMARY:${summary}`);
+        icsContent.push(`DESCRIPTION:${description}`);
+        icsContent.push(`LOCATION:${location}`);
+        icsContent.push("END:VEVENT");
 
-            icsContent.push("BEGIN:VEVENT");
-            icsContent.push(`UID:${buoi.id_tkb}-${buoi.ngay_hoc}@ptit.edu.vn`);
-            icsContent.push(`DTSTAMP:${formatICSDate(new Date().toISOString())}`);
-            icsContent.push(`DTSTART:${dtStart}`);
-            icsContent.push(`DTEND:${dtEnd}`);
-            icsContent.push(`SUMMARY:${summary}`);
-            icsContent.push(`DESCRIPTION:${description}`);
-            icsContent.push(`LOCATION:${location}`);
-            icsContent.push("END:VEVENT");
-
-            eventCount++;
-        });
+        eventCount++;
     });
 
     icsContent.push("END:VCALENDAR");
@@ -185,8 +240,6 @@ async function exportSchedule() {
     const blob = new Blob([icsContent.join("\r\n")], { type: "text/calendar;charset=utf-8" });
     const url = URL.createObjectURL(blob);
 
-    // Create download link via message passing or just plain DOM since we are in content script?
-    // Content script can create DOM elements.
     const a = document.createElement("a");
     a.href = url;
     a.download = `TKB_PTIT_${new Date().toISOString().slice(0, 10)}.ics`;

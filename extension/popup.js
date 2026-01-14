@@ -1,6 +1,7 @@
 document.getElementById("exportBtn").addEventListener("click", async () => {
     const statusDiv = document.getElementById("status");
     const btn = document.getElementById("exportBtn");
+    const shouldMerge = document.getElementById("mergeCheckbox").checked;
 
     statusDiv.textContent = "Đang xử lý...";
     statusDiv.className = "";
@@ -13,8 +14,11 @@ document.getElementById("exportBtn").addEventListener("click", async () => {
             throw new Error("Vui lòng mở trang qldt.ptit.edu.vn!");
         }
 
-        // Gửi message xuống content script
-        const response = await chrome.tabs.sendMessage(tab.id, { action: "START_EXPORT" });
+        // Gửi message xuống content script với option merge
+        const response = await chrome.tabs.sendMessage(tab.id, {
+            action: "START_EXPORT",
+            merge: shouldMerge,
+        });
 
         if (response && response.success) {
             statusDiv.textContent = response.message;

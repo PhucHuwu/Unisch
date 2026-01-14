@@ -34,7 +34,7 @@
         },
     };
 
-    // --- HELPER FUNCTIONS ---
+    // --- HÀM TIỆN ÍCH ---
 
     function getToken() {
         const userStr = sessionStorage.getItem("CURRENT_USER");
@@ -54,12 +54,12 @@
     }
 
     function formatICSDate(dateStr, timeObj = { h: 0, m: 0 }) {
-        // dateStr: "2026-01-12T00:00:00" -> Date object
+        // dateStr: "2026-01-12T00:00:00" -> Đối tượng Date
         const d = new Date(dateStr);
         d.setHours(timeObj.h);
         d.setMinutes(timeObj.m);
 
-        // Format: YYYYMMDDTHHmmSS
+        // Định dạng: YYYYMMDDTHHmmSS
         const year = d.getFullYear();
         const month = String(d.getMonth() + 1).padStart(2, "0");
         const day = String(d.getDate()).padStart(2, "0");
@@ -86,7 +86,7 @@
         return { h: endH, m: endM };
     }
 
-    // --- MAIN LOGIC ---
+    // --- LOGIC CHÍNH ---
 
     try {
         console.log("Đang khởi động...");
@@ -162,7 +162,7 @@
                 const tietBatDau = buoi.tiet_bat_dau;
                 const soTiet = buoi.so_tiet;
 
-                // Mapper giờ
+                // Quy đổi tiết sang giờ
                 const timeStart = CONFIG.START_TIMES[tietBatDau];
                 if (!timeStart) {
                     console.warn(`Không rõ giờ bắt đầu cho tiết ${tietBatDau} của môn ${monHoc}. Bỏ qua.`);
